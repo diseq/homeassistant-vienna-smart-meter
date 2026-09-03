@@ -1,13 +1,24 @@
 # Vienna Smart Meter Home Assistant Integration
+# forked from https://gitlab.com/fabian.guschlbauer/vienna-smart-meter
 
 The Vienna Smart Meter Integration allows you to integrate your smart electricity meter from Vienna into Home Assistant. 
 This enables you to monitor and track data about your electricity consumption.
 
 ## Installation
 
+### HACS
+
+1. In HACS, open the three-dot menu and select **Custom repositories**.
+2. Add `https://github.com/diseq/homeassistant-vienna-smart-meter` with the **Integration** category.
+3. Search for **Vienna Smart Meter** in HACS and install it.
+4. Restart Home Assistant.
+5. Add the integration from **Settings** > **Devices & services**.
+
+### Manual
+
 1. Copy the `custom_components/smart_meter` folder into the `custom_components` directory of your Home Assistant setup.
-2. Restart Home Assistant
-3. Configure the integration via the Home Assistant user interface or your `configuration.yaml` file.
+2. Restart Home Assistant.
+3. Add the integration from **Settings** > **Devices & services**.
 
 ## Configuration
 
