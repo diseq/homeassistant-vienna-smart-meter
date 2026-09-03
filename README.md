@@ -39,6 +39,4 @@ Follow these steps to configure the integration:
 
 Once the integration is configured, sensors for your electricity consumption will be automatically created in Home Assistant. You can use these sensors in your dashboards to monitor your electricity consumption.
 
-## Support
-
-If you need assistance with configuring or using the Vienna Smart Meter Integration, feel free to contact us.
+USE AT YOUR OWN RISK!

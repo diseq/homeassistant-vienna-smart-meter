@@ -2,10 +2,12 @@ import base64
 import hashlib
 import logging
 import os
+import uuid
 import requests
 from dateutil.parser import isoparse
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlparse
 from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
 from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.components.sensor import SensorDeviceClass
@@ -86,32 +88,31 @@ class SmartMeterDataCoordinator(DataUpdateCoordinator):
                 auth_params = {
                     "client_id": CLIENT_ID,
                     "redirect_uri": ALLOWED_REDIRECT_URL,
-                    "state": "static-state",
+                    "state": str(uuid.uuid4()),
                     "response_mode": "fragment",
                     "response_type": "code",
                     "scope": "openid",
-                    "nonce": "static-nonce",
+                    "nonce": str(uuid.uuid4()),
                     "prompt": "none",
                     "code_challenge_method": "S256",
                     "code_challenge": code_challenge,
                 }
                 auth_cookies = {"KEYCLOAK_IDENTITY": self._token}
                 session = requests.session()
-                _LOGGER.debug(f"[AUTH REQUEST] URL={AUTHORIZATION_ENDPOINT} PARAMS={auth_params} COOKIES={auth_cookies}")
                 resp = session.get(
                     AUTHORIZATION_ENDPOINT,
                     params=auth_params,
                     cookies=auth_cookies,
                     allow_redirects=False,
                 )
-                _LOGGER.debug(f"[AUTH RESPONSE] STATUS={resp.status_code} HEADERS={resp.headers} BODY={resp.text}")
+                resp.raise_for_status()
                 return resp
 
             response = await self.hass.async_add_executor_job(execute_request)
-            if not response.headers.get("location"):
+            location = response.headers.get("location")
+            if not location:
                 raise UpdateFailed("Error getting code from authorization call!")
-            code = response.headers.get("location").split("code=")[1]
-            _LOGGER.debug(f"[AUTH SUCCESS] CODE={code}")
+            code = parse_qs(urlparse(location).fragment).get("code", [None])[0]
         except Exception as e:
             _LOGGER.exception("Exception during auth request")
             raise UpdateFailed(f"Error getting access token: {e}")
@@ -129,14 +130,12 @@ class SmartMeterDataCoordinator(DataUpdateCoordinator):
                     "code_verifier": code_verifier,
                 }
                 session = requests.session()
-                _LOGGER.debug(f"[TOKEN REQUEST] URL={TOKEN_ENDPOINT} DATA={token_payload}")
                 resp = session.post(TOKEN_ENDPOINT, data=token_payload)
-                _LOGGER.debug(f"[TOKEN RESPONSE] STATUS={resp.status_code} BODY={resp.text}")
+                resp.raise_for_status()
                 return resp
 
             response = await self.hass.async_add_executor_job(_execute_request)
             self._access_token = response.json().get("access_token")
-            _LOGGER.debug(f"[TOKEN SUCCESS] ACCESS_TOKEN={self._access_token}")
         except Exception as e:
             _LOGGER.exception("Exception during token request")
             raise UpdateFailed(f"Error getting access token: {e}")
@@ -154,12 +153,12 @@ class SmartMeterDataCoordinator(DataUpdateCoordinator):
                         + self._user + "/" + self._device
                         + "?datetimeFrom=" + (datetime.utcnow() - timedelta(days=days + 1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
                         + "&datetimeTo=" + datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    + "&returnDatetimeFrom=false"
                 )
                 headers = {"Authorization": f"Bearer {self._access_token}"}
                 session = requests.session()
-                _LOGGER.debug(f"[METERREADING REQUEST] URL={api_url} HEADERS={headers}")
                 resp = session.get(api_url, headers=headers)
-                _LOGGER.debug(f"[METERREADING RESPONSE] STATUS={resp.status_code} BODY={resp.text}")
+                resp.raise_for_status()
                 return resp
 
             response = await self.hass.async_add_executor_job(_execute_data_request)
@@ -189,12 +188,12 @@ class SmartMeterDataCoordinator(DataUpdateCoordinator):
                     "rolle": self._role,
                     "zeitpunktBis": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.000Z"),
                     "zeitpunktVon": (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                    "aggregat": "NONE"
+                    "aggregat": "NONE",
+                    "wandler": "false",
                 }
                 session = requests.session()
-                _LOGGER.debug(f"[BEWEGUNGSDATEN REQUEST] URL={api_url} HEADERS={headers} PARAMS={params}")
                 resp = session.get(api_url, headers=headers, params=params)
-                _LOGGER.debug(f"[BEWEGUNGSDATEN RESPONSE] STATUS={resp.status_code} BODY={resp.text}")
+                resp.raise_for_status()
                 return resp
 
             response = await self.hass.async_add_executor_job(_execute_data_request)
@@ -211,7 +210,7 @@ class SmartMeterDataCoordinator(DataUpdateCoordinator):
                 consumption_value = v.get("wert")
                 consumption_date = v.get("zeitpunktVon")
                 if consumption_value is None or consumption_date is None:
-                    LOGGER.debug(f"Meter reading entry not valid {v}, skipping value")
+                    _LOGGER.debug("Meter reading entry is invalid, skipping value")
                     continue
 
                 ts = isoparse(consumption_date).astimezone(timezone.utc)
@@ -247,9 +246,6 @@ class SmartMeterDataCoordinator(DataUpdateCoordinator):
         )
 
         if data:
-            for hour, value in sorted(data.items()):
-                _LOGGER.debug(f"[HOURLY AGGREGATION] Hour={hour} Sum={value:.3f} kWh")
-
             statistic_data = [StatisticData(start=dt, sum=value) for dt, value in sorted(data.items())]
             async_add_external_statistics(self.hass, metadata, statistic_data)
             _LOGGER.debug(f"[BEWEGUNGSDATEN SUCCESS] Inserted {len(statistic_data)} hourly values")
